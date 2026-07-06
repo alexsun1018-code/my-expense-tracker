@@ -391,6 +391,22 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
 }
 .form-group select option { background: #1a1040; color: var(--text-primary); }
 .form-group textarea { resize: vertical; min-height: 60px; }
+.password-wrap { position: relative; }
+.password-wrap input { width: 100%; padding-right: 36px; }
+.password-toggle-btn {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  line-height: 1;
+}
+.password-toggle-btn:hover { color: var(--accent); }
 .field-error { font-size: 11px; color: var(--expense); margin-top: 2px; display: none; }
 .field-error.show { display: block; }
 .form-actions {
@@ -1092,7 +1108,10 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
     </div>
     <div class="form-group" style="margin-bottom:8px">
       <label>密碼</label>
-      <input type="password" id="auth-password" autocomplete="current-password">
+      <div class="password-wrap">
+        <input type="password" id="auth-password" autocomplete="current-password">
+        <button type="button" class="password-toggle-btn" id="auth-password-toggle" aria-label="顯示密碼">👁</button>
+      </div>
     </div>
     <span class="field-error" id="auth-error"></span>
     <div class="form-actions" style="margin-top:16px">
@@ -2251,6 +2270,15 @@ async function initApp() {
   document.getElementById('auth-password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuthForm(); });
   document.getElementById('auth-toggle-link').addEventListener('click', () => setAuthMode(authMode === 'login' ? 'register' : 'login'));
   document.getElementById('logout-btn').addEventListener('click', logout);
+
+  document.getElementById('auth-password-toggle').addEventListener('click', () => {
+    const input = document.getElementById('auth-password');
+    const btn = document.getElementById('auth-password-toggle');
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.textContent = show ? '🙈' : '👁';
+    btn.setAttribute('aria-label', show ? '隱藏密碼' : '顯示密碼');
+  });
 
   if (!getToken()) {
     showAuthOverlay();
