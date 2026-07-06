@@ -1,0 +1,34 @@
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  current_month TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  initial_balance NUMERIC NOT NULL DEFAULT 0,
+  color TEXT,
+  PRIMARY KEY (id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+  id TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date DATE NOT NULL,
+  amount NUMERIC NOT NULL,
+  flow TEXT NOT NULL CHECK (flow IN ('income','expense')),
+  category TEXT,
+  account_id TEXT NOT NULL,
+  payment_method_id TEXT,
+  merchant TEXT,
+  note TEXT,
+  necessary BOOLEAN,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (id, user_id),
+  FOREIGN KEY (account_id, user_id) REFERENCES accounts(id, user_id) ON DELETE RESTRICT
+);

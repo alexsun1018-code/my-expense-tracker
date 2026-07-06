@@ -74,6 +74,19 @@ header::before {
   color: var(--accent);
 }
 
+.logout-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.logout-btn:hover { color: var(--expense); border-color: var(--expense); }
+
 /* ── Desktop Nav ── */
 nav.desktop-nav {
   display: flex;
@@ -846,6 +859,7 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
     <button data-tab="accounts">帳戶</button>
     <button data-tab="stats">統計</button>
   </nav>
+  <button class="logout-btn" id="logout-btn">登出</button>
 </header>
 
 <main>
@@ -1068,6 +1082,28 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
   </section>
 </main>
 
+<div class="edit-overlay" id="auth-overlay">
+  <div class="edit-box">
+    <div class="edit-box-title" id="auth-title">登入</div>
+    <div class="edit-box-sub">登入後資料會同步到雲端資料庫</div>
+    <div class="form-group" style="margin-bottom:12px">
+      <label>Email</label>
+      <input type="email" id="auth-email" autocomplete="username">
+    </div>
+    <div class="form-group" style="margin-bottom:8px">
+      <label>密碼</label>
+      <input type="password" id="auth-password" autocomplete="current-password">
+    </div>
+    <span class="field-error" id="auth-error"></span>
+    <div class="form-actions" style="margin-top:16px">
+      <button class="btn btn-primary" id="auth-submit-btn" style="width:100%">登入</button>
+    </div>
+    <div style="text-align:center; margin-top:12px">
+      <a href="#" id="auth-toggle-link" style="font-size:12px; color:var(--accent)">還沒有帳號？註冊</a>
+    </div>
+  </div>
+</div>
+
 <div class="edit-overlay" id="edit-overlay">
   <div class="edit-box">
     <div class="edit-box-title">編輯記錄歸戶</div>
@@ -1116,41 +1152,81 @@ const ACC_COLORS = {
   ewallet: '#38bdf8'
 };
 
-const DEFAULT_ACCOUNTS = [
-  { id: 'acc_1', name: '現金',     type: 'cash',    initialBalance: 0, color: ACC_COLORS.cash },
-  { id: 'acc_2', name: '銀行存款', type: 'bank',    initialBalance: 0, color: ACC_COLORS.bank },
-  { id: 'acc_3', name: '信用卡',   type: 'credit',  initialBalance: 0, color: ACC_COLORS.credit },
-  { id: 'acc_4', name: '電子支付', type: 'ewallet', initialBalance: 0, color: ACC_COLORS.ewallet },
-];
-
 const PIE_COLORS     = ['#e8908a','#e8b87a','#d8c068','#d0a898','#90a8d8','#b898d8','#d098b8','#a8b8c8'];
 const INCOME_COLORS  = ['#4ade80','#34d399','#22d3ee','#38bdf8','#86efac'];
 
 // ═══════════════════════════════
-// Store（localStorage 封裝）
+// API（後端連線）
 // ═══════════════════════════════
-const Store = {
-  getAccounts() {
-    const raw = localStorage.getItem('budget_accounts');
-    return raw ? JSON.parse(raw) : null;
-  },
-  saveAccounts(arr) {
-    localStorage.setItem('budget_accounts', JSON.stringify(arr));
-  },
-  getTxns() {
-    const raw = localStorage.getItem('budget_transactions');
-    return raw ? JSON.parse(raw) : [];
-  },
-  saveTxns(arr) {
-    localStorage.setItem('budget_transactions', JSON.stringify(arr));
-  },
-  getMeta() {
-    const raw = localStorage.getItem('budget_meta');
-    return raw ? JSON.parse(raw) : null;
-  },
-  saveMeta(obj) {
-    localStorage.setItem('budget_meta', JSON.stringify(obj));
+const API_BASE = 'http://localhost:3000';
+
+function getToken() { return localStorage.getItem('auth_token'); }
+function setToken(t) { localStorage.setItem('auth_token', t); }
+function clearToken() { localStorage.removeItem('auth_token'); }
+
+async function api(method, path, body) {
+  const res = await fetch(API_BASE + path, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(getToken() ? { Authorization: 'Bearer ' + getToken() } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    let msg = '請求失敗';
+    try { msg = (await res.json()).error || msg; } catch {}
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ═══════════════════════════════
+// Store（記憶體 cache + API）
+// ═══════════════════════════════
+const cache = { accounts: [], txns: [], meta: null };
+
+const Store = {
+  getAccounts() { return cache.accounts; },
+  getTxns() { return cache.txns; },
+  getMeta() { return cache.meta; },
+  async addAccount(acc) {
+    await api('POST', '/api/accounts', acc);
+    cache.accounts = [...cache.accounts, acc];
+  },
+  async deleteAccount(id) {
+    await api('DELETE', '/api/accounts/' + id);
+    cache.accounts = cache.accounts.filter(a => a.id !== id);
+  },
+  async addTxn(t) {
+    await api('POST', '/api/transactions', t);
+    cache.txns = [...cache.txns, t];
+  },
+  async updateTxn(id, patch) {
+    await api('PUT', '/api/transactions/' + id, patch);
+    cache.txns = cache.txns.map(t => t.id === id ? { ...t, ...patch } : t);
+  },
+  async deleteTxn(id) {
+    cache.txns = cache.txns.filter(t => t.id !== id);
+    await api('DELETE', '/api/transactions/' + id);
+  },
+  async saveMeta(obj) {
+    await api('PUT', '/api/meta', obj);
+    cache.meta = obj;
+  },
 };
 
 // ═══════════════════════════════
@@ -1303,7 +1379,7 @@ function renderOverview() {
       <div class="account-mini-card">
         <div class="acc-icon" style="background:${a.color}22;">${ACC_ICONS[a.type] || '💰'}</div>
         <div class="acc-info">
-          <div class="acc-name">${a.name}</div>
+          <div class="acc-name">${escapeHtml(a.name)}</div>
           <div class="acc-balance" style="color:${bal < 0 ? 'var(--expense)' : 'var(--text-primary)'}">${formatBalance(bal)}</div>
         </div>
       </div>`;
@@ -1328,8 +1404,8 @@ function txnItemHtml(t, accounts) {
     <div class="txn-item">
       <div class="txn-dot ${t.flow}"></div>
       <div class="txn-meta">
-        <div class="txn-category">${t.category}</div>
-        <div class="txn-sub">${t.date} · ${getAccountName(t.accountId, accounts)}${t.merchant ? ' · ' + t.merchant : ''}${t.note ? ' · ' + t.note : ''}</div>
+        <div class="txn-category">${escapeHtml(t.category)}</div>
+        <div class="txn-sub">${t.date} · ${escapeHtml(getAccountName(t.accountId, accounts))}${t.merchant ? ' · ' + escapeHtml(t.merchant) : ''}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
       </div>
       <div class="txn-amount ${t.flow}">${sign}${formatAmt(t.amount)}</div>
       <button class="txn-edit" data-id="${t.id}" title="編輯歸戶">⋯</button>
@@ -1349,7 +1425,7 @@ function renderAccountFilter() {
   const chips = accounts.map(a => {
     const active = state.filterAccountId === a.id;
     const colorStyle = active ? `border-color:${a.color};color:${a.color};background:${a.color}22` : '';
-    return `<button class="acc-chip${active ? ' active' : ''}" data-acc-id="${a.id}" style="${colorStyle}">${ACC_ICONS[a.type] || '💰'} ${a.name}</button>`;
+    return `<button class="acc-chip${active ? ' active' : ''}" data-acc-id="${a.id}" style="${colorStyle}">${ACC_ICONS[a.type] || '💰'} ${escapeHtml(a.name)}</button>`;
   }).join('');
 
   const allChip = accounts.length > 1
@@ -1470,7 +1546,7 @@ function renderAccounts() {
         <div class="account-card-header">
           <div class="account-card-name">
             <span>${ACC_ICONS[a.type] || '💰'}</span>
-            <span>${a.name}</span>
+            <span>${escapeHtml(a.name)}</span>
           </div>
           <button class="btn btn-danger btn-sm" onclick="deleteAccount('${a.id}')">刪除</button>
         </div>
@@ -1713,7 +1789,7 @@ function populateFormSelects() {
   const accounts = Store.getAccounts();
   const accSel = document.getElementById('f-account');
   const paymentMethods = accounts.filter(a => ['cash','credit','ewallet'].includes(a.type));
-  accSel.innerHTML = paymentMethods.map(a => `<option value="${a.id}">${ACC_ICONS[a.type]} ${a.name}</option>`).join('');
+  accSel.innerHTML = paymentMethods.map(a => `<option value="${a.id}">${ACC_ICONS[a.type]} ${escapeHtml(a.name)}</option>`).join('');
 }
 
 function showAddForm() {
@@ -1785,7 +1861,7 @@ function validateAddForm() {
   return ok;
 }
 
-function submitAddForm() {
+async function submitAddForm() {
   if (!validateAddForm()) return;
 
   const flow = document.getElementById('f-flow').value;
@@ -1805,19 +1881,26 @@ function submitAddForm() {
     createdAt: Date.now()
   };
 
-  const txns = Store.getTxns();
-  txns.push(txn);
-  Store.saveTxns(txns);
+  try {
+    await Store.addTxn(txn);
+  } catch {
+    alert('儲存失敗，請檢查網路連線');
+    return;
+  }
 
   hideAddForm();
   renderRecords();
   if (state.currentTab === 'overview') renderOverview();
 }
 
-function deleteTxn(id) {
+async function deleteTxn(id) {
   if (!confirm('確定刪除這筆記錄？')) return;
-  const txns = Store.getTxns().filter(t => t.id !== id);
-  Store.saveTxns(txns);
+  try {
+    await Store.deleteTxn(id);
+  } catch {
+    alert('刪除失敗，請檢查網路連線');
+    return;
+  }
   renderCurrentTab();
   if (state.currentTab !== 'overview') renderOverview();
 }
@@ -1825,7 +1908,7 @@ function deleteTxn(id) {
 // ═══════════════════════════════
 // 帳戶管理
 // ═══════════════════════════════
-function submitAddAccount() {
+async function submitAddAccount() {
   const nameEl = document.getElementById('af-name');
   const initEl = document.getElementById('af-initial');
   const name = nameEl.value.trim();
@@ -1849,14 +1932,19 @@ function submitAddAccount() {
 
   if (!ok) return;
 
-  accounts.push({
+  const newAcc = {
     id: generateId('acc'),
     name,
     type,
     initialBalance: parseFloat(initVal),
     color: ACC_COLORS[type] || '#7c6af5'
-  });
-  Store.saveAccounts(accounts);
+  };
+  try {
+    await Store.addAccount(newAcc);
+  } catch {
+    alert('新增失敗，請檢查網路連線');
+    return;
+  }
 
   nameEl.value = '';
   initEl.value = '0';
@@ -1864,7 +1952,7 @@ function submitAddAccount() {
   renderAccounts();
 }
 
-window.deleteAccount = function (id) {
+window.deleteAccount = async function (id) {
   const txns = Store.getTxns();
   const hasTxns = txns.some(t => t.accountId === id);
   if (hasTxns) {
@@ -1872,8 +1960,12 @@ window.deleteAccount = function (id) {
     return;
   }
   if (!confirm('確定刪除此帳戶？')) return;
-  const accounts = Store.getAccounts().filter(a => a.id !== id);
-  Store.saveAccounts(accounts);
+  try {
+    await Store.deleteAccount(id);
+  } catch (err) {
+    alert(err.message || '刪除失敗，請檢查網路連線');
+    return;
+  }
   renderAccounts();
 };
 
@@ -1912,7 +2004,7 @@ function exportCSV() {
 function setMonth(ym) {
   state.currentMonth = ym;
   const meta = Store.getMeta();
-  Store.saveMeta({ ...meta, currentMonth: ym });
+  Store.saveMeta({ ...meta, currentMonth: ym }).catch(() => {});
   renderCurrentTab();
 }
 
@@ -1932,11 +2024,11 @@ function openEditModal(txnId) {
   const paymentAccs   = accounts.filter(a => ['cash','credit','ewallet'].includes(a.type));
 
   document.getElementById('em-account').innerHTML =
-    bankAccounts.map(a => `<option value="${a.id}"${txn.accountId === a.id ? ' selected' : ''}>${ACC_ICONS[a.type]} ${a.name}</option>`).join('');
+    bankAccounts.map(a => `<option value="${a.id}"${txn.accountId === a.id ? ' selected' : ''}>${ACC_ICONS[a.type]} ${escapeHtml(a.name)}</option>`).join('');
 
   document.getElementById('em-payment').innerHTML =
     `<option value="">— 未設定 —</option>` +
-    paymentAccs.map(a => `<option value="${a.id}"${txn.paymentMethod === a.id ? ' selected' : ''}>${ACC_ICONS[a.type]} ${a.name}</option>`).join('');
+    paymentAccs.map(a => `<option value="${a.id}"${txn.paymentMethod === a.id ? ' selected' : ''}>${ACC_ICONS[a.type]} ${escapeHtml(a.name)}</option>`).join('');
 
   const label = `${txn.date}　${txn.flow === 'income' ? '+' : '-'}$${formatAmt(txn.amount)}　${txn.category}`;
   document.getElementById('edit-box-sub').textContent = label;
@@ -1996,17 +2088,18 @@ function bindEvents() {
   document.getElementById('edit-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeEditModal();
   });
-  document.getElementById('em-save').addEventListener('click', () => {
+  document.getElementById('em-save').addEventListener('click', async () => {
     if (!_editId) return;
-    const txns = Store.getTxns().map(t => {
-      if (t.id !== _editId) return t;
-      return {
-        ...t,
-        accountId:     document.getElementById('em-account').value,
-        paymentMethod: document.getElementById('em-payment').value || undefined,
-      };
-    });
-    Store.saveTxns(txns);
+    const patch = {
+      accountId:     document.getElementById('em-account').value,
+      paymentMethod: document.getElementById('em-payment').value || undefined,
+    };
+    try {
+      await Store.updateTxn(_editId, patch);
+    } catch {
+      alert('儲存失敗，請檢查網路連線');
+      return;
+    }
     closeEditModal();
     renderCurrentTab();
     if (state.currentTab !== 'overview') renderOverview();
@@ -2022,7 +2115,7 @@ function bindEvents() {
     document.getElementById('inline-payment-form').classList.remove('show');
     document.getElementById('ip-name').value = '';
   });
-  document.getElementById('ip-confirm').addEventListener('click', () => {
+  document.getElementById('ip-confirm').addEventListener('click', async () => {
     const name = document.getElementById('ip-name').value.trim();
     if (!name) { document.getElementById('ip-name').focus(); return; }
     const accounts = Store.getAccounts();
@@ -2032,8 +2125,12 @@ function bindEvents() {
     } else {
       const type = document.getElementById('ip-type').value;
       const newAcc = { id: generateId('acc'), name, type, initialBalance: 0, color: ACC_COLORS[type] || ACC_COLORS.cash };
-      accounts.push(newAcc);
-      Store.saveAccounts(accounts);
+      try {
+        await Store.addAccount(newAcc);
+      } catch {
+        alert('新增失敗，請檢查網路連線');
+        return;
+      }
       populateFormSelects();
       document.getElementById('f-account').value = newAcc.id;
     }
@@ -2046,102 +2143,127 @@ function bindEvents() {
 }
 
 // ═══════════════════════════════
+// 登入 / 註冊
+// ═══════════════════════════════
+let authMode = 'login';
+
+function showAuthOverlay() {
+  document.getElementById('auth-overlay').classList.add('show');
+}
+function hideAuthOverlay() {
+  document.getElementById('auth-overlay').classList.remove('show');
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  document.getElementById('auth-title').textContent = mode === 'login' ? '登入' : '註冊';
+  document.getElementById('auth-submit-btn').textContent = mode === 'login' ? '登入' : '註冊';
+  document.getElementById('auth-toggle-link').textContent = mode === 'login' ? '還沒有帳號？註冊' : '已經有帳號？登入';
+  document.getElementById('auth-error').classList.remove('show');
+}
+
+async function submitAuthForm() {
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const errEl = document.getElementById('auth-error');
+  errEl.classList.remove('show');
+
+  if (!email || !password) {
+    errEl.textContent = '請輸入 email 和密碼';
+    errEl.classList.add('show');
+    return;
+  }
+
+  try {
+    const result = await api('POST', authMode === 'login' ? '/api/auth/login' : '/api/auth/register', { email, password });
+    setToken(result.token);
+    hideAuthOverlay();
+    await bootstrapApp();
+  } catch (err) {
+    errEl.textContent = err.message || '發生錯誤，請稍後再試';
+    errEl.classList.add('show');
+  }
+}
+
+function logout() {
+  clearToken();
+  location.reload();
+}
+
+async function maybeOfferLegacyImport() {
+  const legacyAccounts = localStorage.getItem('budget_accounts');
+  const legacyTxns = localStorage.getItem('budget_transactions');
+  if (!legacyAccounts && !legacyTxns) return;
+  if (cache.txns.length > 0) return;
+
+  if (!confirm('偵測到此裝置有舊的本機記帳資料，要匯入到你的帳號嗎？')) return;
+
+  try {
+    await api('POST', '/api/import', {
+      accounts: legacyAccounts ? JSON.parse(legacyAccounts) : [],
+      transactions: legacyTxns ? JSON.parse(legacyTxns) : [],
+    });
+    const [accounts, txns] = await Promise.all([
+      api('GET', '/api/accounts'),
+      api('GET', '/api/transactions'),
+    ]);
+    cache.accounts = accounts;
+    cache.txns = txns;
+  } catch (err) {
+    alert('匯入失敗：' + (err.message || '請稍後再試'));
+  }
+}
+
+// ═══════════════════════════════
 // 初始化
 // ═══════════════════════════════
-function migrateRecordsToEsun() {
-  const meta = Store.getMeta();
-  if (meta && meta.migratedToEsun) return;
+async function bootstrapApp() {
+  const [accounts, txns, meta] = await Promise.all([
+    api('GET', '/api/accounts'),
+    api('GET', '/api/transactions'),
+    api('GET', '/api/meta'),
+  ]);
+  cache.accounts = accounts;
+  cache.txns = txns;
+  cache.meta = meta;
 
-  let accounts = Store.getAccounts();
-  if (!accounts) return;
+  await maybeOfferLegacyImport();
 
-  // 找或建立玉山銀行
-  let esun = accounts.find(a => a.name === '玉山銀行' || a.id === 'acc_esun');
-  if (!esun) {
-    esun = { id: 'acc_esun', name: '玉山銀行', type: 'bank', initialBalance: 0, color: ACC_COLORS.bank };
-    accounts.push(esun);
-    Store.saveAccounts(accounts);
-  }
+  state.currentMonth = cache.meta.currentMonth || thisMonthStr();
 
-  // 所有記錄轉移至玉山銀行
-  const txns = Store.getTxns();
-  if (txns.length > 0) {
-    Store.saveTxns(txns.map(t => ({ ...t, accountId: esun.id })));
-  }
-
-  Store.saveMeta({ ...(meta || { currentMonth: thisMonthStr(), version: 1 }), migratedToEsun: true });
-}
-
-function fixBankAccountTypes() {
-  const accounts = Store.getAccounts();
-  if (!accounts) return;
-  const BANK_IDS  = new Set(['acc_2', 'acc_esun']);
-  const BANK_KEYS = ['銀行', '永豐', '兆豐', '玉山', '台新', '國泰', '中信', '富邦', '遠東', '土銀', '華南', '合庫', '第一', '彰銀', '聯邦', '元大', '星展', '渣打', '匯豐'];
-  const fixed = accounts.map(a => {
-    const isBank = BANK_IDS.has(a.id) || BANK_KEYS.some(kw => a.name?.includes(kw));
-    return (isBank && a.type !== 'bank') ? { ...a, type: 'bank' } : a;
-  });
-  if (fixed.some((a, i) => a.type !== accounts[i].type)) Store.saveAccounts(fixed);
-}
-
-function migrateV2() {
-  const meta = Store.getMeta();
-  if (meta && meta.migratedV2) return;
-
-  const accounts = Store.getAccounts();
-  if (!accounts) return;
-
-  const bankAcc = accounts.find(a => a.type === 'bank');
-  if (!bankAcc) return;
-
-  // 任何 accountId 不是銀行帳戶的記錄，將舊 accountId 存為 paymentMethod，並指向銀行帳戶
-  const txns = Store.getTxns().map(t => {
-    const acc = accounts.find(a => a.id === t.accountId);
-    if (!acc || acc.type !== 'bank') {
-      return { ...t, paymentMethod: t.paymentMethod || t.accountId, accountId: bankAcc.id };
-    }
-    return t;
-  });
-  Store.saveTxns(txns);
-  Store.saveMeta({ ...(meta || {}), migratedV2: true });
-}
-
-function initApp() {
-  // 帳戶初始化
-  if (!Store.getAccounts()) {
-    Store.saveAccounts(DEFAULT_ACCOUNTS);
-  }
-
-  // 玉山銀行建立 + 歷史資料遷移
-  migrateRecordsToEsun();
-  migrateV2();
-  fixBankAccountTypes();
-
-  // meta 初始化
-  const meta = Store.getMeta();
-  if (!meta) {
-    Store.saveMeta({ currentMonth: thisMonthStr(), version: 1 });
-    state.currentMonth = thisMonthStr();
-  } else {
-    state.currentMonth = meta.currentMonth || thisMonthStr();
-  }
-
-  // 初始 chip：選記錄最多的銀行帳戶（只比 accountId，遷移後 acc_esun 一定勝出）
-  (function pickInitialBank() {
-    const accs  = Store.getAccounts() || [];
-    const txns  = Store.getTxns()     || [];
-    const banks = accs.filter(a => a.type === 'bank');
-    if (!banks.length) return;
+  // 初始 chip：選記錄最多的銀行帳戶
+  const banks = cache.accounts.filter(a => a.type === 'bank');
+  if (banks.length) {
     let best = banks[0], bestN = 0;
     banks.forEach(a => {
-      const n = txns.filter(t => t.accountId === a.id).length;
+      const n = cache.txns.filter(t => t.accountId === a.id).length;
       if (n > bestN) { bestN = n; best = a; }
     });
     state.filterAccountId = best.id;
-  })();
+  }
 
   bindEvents();
   renderOverview();
+}
+
+async function initApp() {
+  document.getElementById('auth-submit-btn').addEventListener('click', submitAuthForm);
+  document.getElementById('auth-password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuthForm(); });
+  document.getElementById('auth-toggle-link').addEventListener('click', () => setAuthMode(authMode === 'login' ? 'register' : 'login'));
+  document.getElementById('logout-btn').addEventListener('click', logout);
+
+  if (!getToken()) {
+    showAuthOverlay();
+    return;
+  }
+
+  try {
+    await api('GET', '/api/auth/me');
+    await bootstrapApp();
+  } catch {
+    clearToken();
+    showAuthOverlay();
+  }
 }
 
 initApp();
