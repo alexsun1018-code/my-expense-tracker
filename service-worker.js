@@ -1,4 +1,4 @@
-const CACHE_NAME = 'budget-app-v2';
+const CACHE_NAME = 'budget-app-v3';
 
 const PRECACHE_URLS = [
   './',
@@ -31,6 +31,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+
+  // 跨網域 API 請求（記帳資料）一律直接打網路，不快取，避免登入後看到過期資料
+  if (new URL(event.request.url).origin !== self.location.origin) return;
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
