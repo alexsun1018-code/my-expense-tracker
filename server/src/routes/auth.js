@@ -1,10 +1,12 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { DEFAULT_ACCOUNTS } = require('../defaultAccounts');
+const { sendPasswordResetEmail } = require('../email');
 
 const router = express.Router();
 
@@ -21,6 +23,10 @@ function thisMonthStr() {
 
 function issueToken(userId) {
   return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '30d' });
+}
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
 }
 
 router.post('/register', authLimiter, async (req, res) => {
@@ -85,6 +91,62 @@ router.get('/me', requireAuth, async (req, res) => {
   const result = await pool.query('SELECT id, email FROM users WHERE id = $1', [req.userId]);
   if (!result.rows.length) return res.status(404).json({ error: '找不到使用者' });
   res.json(result.rows[0]);
+});
+
+router.post('/forgot-password', authLimiter, async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: '請輸入 email' });
+
+  try {
+    const result = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (result.rows.length) {
+      const userId = result.rows[0].id;
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const expires = new Date(Date.now() + 30 * 60 * 1000);
+      await pool.query(
+        'UPDATE users SET reset_token_hash = $1, reset_token_expires = $2 WHERE id = $3',
+        [hashToken(rawToken), expires, userId]
+      );
+      const appUrl = process.env.APP_URL || 'https://alexsun1018-code.github.io/my-expense-tracker';
+      try {
+        await sendPasswordResetEmail(email, `${appUrl}?reset_token=${rawToken}`);
+      } catch (mailErr) {
+        // 寄信失敗只記錄在伺服器端，不讓客戶端察覺帳號是否存在或寄信是否成功
+        console.error('寄送重設密碼信件失敗:', mailErr);
+      }
+    }
+  } catch (err) {
+    console.error(err);
+  }
+  // 無論帳號是否存在、寄信是否成功，一律回覆同樣的訊息，避免被用來探測已註冊的 email
+  res.json({ message: '如果此信箱已註冊，重設信件已寄出' });
+});
+
+router.post('/reset-password', authLimiter, async (req, res) => {
+  const { token, password } = req.body || {};
+  if (!token || !password || password.length < 6) {
+    return res.status(400).json({ error: '請輸入新密碼，至少 6 碼' });
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT id FROM users WHERE reset_token_hash = $1 AND reset_token_expires > now()',
+      [hashToken(token)]
+    );
+    if (!result.rows.length) {
+      return res.status(400).json({ error: '連結無效或已過期，請重新申請' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    await pool.query(
+      'UPDATE users SET password_hash = $1, reset_token_hash = NULL, reset_token_expires = NULL WHERE id = $2',
+      [passwordHash, result.rows[0].id]
+    );
+    res.json({ message: '密碼已重設' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '重設失敗，請稍後再試' });
+  }
 });
 
 module.exports = router;

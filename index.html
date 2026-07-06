@@ -1101,13 +1101,13 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
 <div class="edit-overlay" id="auth-overlay">
   <div class="edit-box">
     <div class="edit-box-title" id="auth-title">登入</div>
-    <div class="edit-box-sub">登入後資料會同步到雲端資料庫</div>
-    <div class="form-group" style="margin-bottom:12px">
+    <div class="edit-box-sub" id="auth-subtitle">登入後資料會同步到雲端資料庫</div>
+    <div class="form-group" style="margin-bottom:12px" id="auth-email-group">
       <label>Email</label>
       <input type="email" id="auth-email" autocomplete="username">
     </div>
-    <div class="form-group" style="margin-bottom:8px">
-      <label>密碼</label>
+    <div class="form-group" style="margin-bottom:8px" id="auth-password-group">
+      <label id="auth-password-label">密碼</label>
       <div class="password-wrap">
         <input type="password" id="auth-password" autocomplete="current-password">
         <button type="button" class="password-toggle-btn" id="auth-password-toggle" aria-label="顯示密碼">👁</button>
@@ -1119,6 +1119,9 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
     </div>
     <div style="text-align:center; margin-top:12px">
       <a href="#" id="auth-toggle-link" style="font-size:12px; color:var(--accent)">還沒有帳號？註冊</a>
+    </div>
+    <div style="text-align:center; margin-top:8px">
+      <a href="#" id="auth-forgot-link" style="font-size:12px; color:var(--text-muted)">忘記密碼？</a>
     </div>
   </div>
 </div>
@@ -2164,7 +2167,8 @@ function bindEvents() {
 // ═══════════════════════════════
 // 登入 / 註冊
 // ═══════════════════════════════
-let authMode = 'login';
+let authMode = 'login'; // 'login' | 'register' | 'forgot' | 'reset'
+let resetToken = null;
 
 function showAuthOverlay() {
   document.getElementById('auth-overlay').classList.add('show');
@@ -2175,17 +2179,93 @@ function hideAuthOverlay() {
 
 function setAuthMode(mode) {
   authMode = mode;
-  document.getElementById('auth-title').textContent = mode === 'login' ? '登入' : '註冊';
-  document.getElementById('auth-submit-btn').textContent = mode === 'login' ? '登入' : '註冊';
-  document.getElementById('auth-toggle-link').textContent = mode === 'login' ? '還沒有帳號？註冊' : '已經有帳號？登入';
-  document.getElementById('auth-error').classList.remove('show');
+  const emailGroup = document.getElementById('auth-email-group');
+  const passwordGroup = document.getElementById('auth-password-group');
+  const toggleLink = document.getElementById('auth-toggle-link');
+  const forgotLink = document.getElementById('auth-forgot-link');
+  const errEl = document.getElementById('auth-error');
+
+  errEl.classList.remove('show');
+  errEl.style.color = '';
+
+  if (mode === 'login' || mode === 'register') {
+    emailGroup.style.display = '';
+    passwordGroup.style.display = '';
+    toggleLink.style.display = '';
+    forgotLink.style.display = mode === 'login' ? '' : 'none';
+    forgotLink.textContent = '忘記密碼？';
+    document.getElementById('auth-title').textContent = mode === 'login' ? '登入' : '註冊';
+    document.getElementById('auth-subtitle').textContent = '登入後資料會同步到雲端資料庫';
+    document.getElementById('auth-password-label').textContent = '密碼';
+    document.getElementById('auth-submit-btn').textContent = mode === 'login' ? '登入' : '註冊';
+    toggleLink.textContent = mode === 'login' ? '還沒有帳號？註冊' : '已經有帳號？登入';
+  } else if (mode === 'forgot') {
+    emailGroup.style.display = '';
+    passwordGroup.style.display = 'none';
+    toggleLink.style.display = 'none';
+    forgotLink.style.display = '';
+    forgotLink.textContent = '返回登入';
+    document.getElementById('auth-title').textContent = '忘記密碼';
+    document.getElementById('auth-subtitle').textContent = '輸入註冊時使用的 email，我們會寄送重設密碼連結';
+    document.getElementById('auth-submit-btn').textContent = '寄送重設信件';
+  } else if (mode === 'reset') {
+    emailGroup.style.display = 'none';
+    passwordGroup.style.display = '';
+    toggleLink.style.display = 'none';
+    forgotLink.style.display = 'none';
+    document.getElementById('auth-title').textContent = '設定新密碼';
+    document.getElementById('auth-subtitle').textContent = '請輸入新密碼（至少 6 碼）';
+    document.getElementById('auth-password-label').textContent = '新密碼';
+    document.getElementById('auth-submit-btn').textContent = '重設密碼';
+  }
 }
 
 async function submitAuthForm() {
-  const email = document.getElementById('auth-email').value.trim();
-  const password = document.getElementById('auth-password').value;
   const errEl = document.getElementById('auth-error');
   errEl.classList.remove('show');
+  errEl.style.color = '';
+
+  if (authMode === 'forgot') {
+    const email = document.getElementById('auth-email').value.trim();
+    if (!email) {
+      errEl.textContent = '請輸入 email';
+      errEl.classList.add('show');
+      return;
+    }
+    try {
+      const result = await api('POST', '/api/auth/forgot-password', { email });
+      errEl.style.color = 'var(--income)';
+      errEl.textContent = result.message || '如果此信箱已註冊，重設信件已寄出';
+      errEl.classList.add('show');
+    } catch (err) {
+      errEl.textContent = err.message || '發生錯誤，請稍後再試';
+      errEl.classList.add('show');
+    }
+    return;
+  }
+
+  if (authMode === 'reset') {
+    const password = document.getElementById('auth-password').value;
+    if (!password || password.length < 6) {
+      errEl.textContent = '密碼至少需要 6 碼';
+      errEl.classList.add('show');
+      return;
+    }
+    try {
+      await api('POST', '/api/auth/reset-password', { token: resetToken, password });
+      resetToken = null;
+      history.replaceState(null, '', location.pathname);
+      alert('密碼已重設，請用新密碼登入');
+      setAuthMode('login');
+    } catch (err) {
+      errEl.textContent = err.message || '重設失敗，連結可能已過期';
+      errEl.classList.add('show');
+    }
+    return;
+  }
+
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
 
   if (!email || !password) {
     errEl.textContent = '請輸入 email 和密碼';
@@ -2269,6 +2349,7 @@ async function initApp() {
   document.getElementById('auth-submit-btn').addEventListener('click', submitAuthForm);
   document.getElementById('auth-password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuthForm(); });
   document.getElementById('auth-toggle-link').addEventListener('click', () => setAuthMode(authMode === 'login' ? 'register' : 'login'));
+  document.getElementById('auth-forgot-link').addEventListener('click', () => setAuthMode(authMode === 'forgot' ? 'login' : 'forgot'));
   document.getElementById('logout-btn').addEventListener('click', logout);
 
   document.getElementById('auth-password-toggle').addEventListener('click', () => {
@@ -2279,6 +2360,15 @@ async function initApp() {
     btn.textContent = show ? '🙈' : '👁';
     btn.setAttribute('aria-label', show ? '隱藏密碼' : '顯示密碼');
   });
+
+  const urlParams = new URLSearchParams(location.search);
+  const tokenFromUrl = urlParams.get('reset_token');
+  if (tokenFromUrl) {
+    resetToken = tokenFromUrl;
+    setAuthMode('reset');
+    showAuthOverlay();
+    return;
+  }
 
   if (!getToken()) {
     showAuthOverlay();
