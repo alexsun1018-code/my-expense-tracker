@@ -437,6 +437,11 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
 
 /* ── Accounts Tab ── */
 .accounts-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+.danger-zone {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 8px;
+}
 .account-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -1058,6 +1063,12 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
     </div>
 
     <div class="accounts-list" id="accounts-list"></div>
+
+    <div class="danger-zone">
+      <div class="section-title" style="margin-bottom:8px">危險區域</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px">刪除帳號將永久移除你的所有帳戶與交易記錄，無法復原。</p>
+      <button class="btn btn-danger btn-sm" id="show-delete-account-btn">刪除我的帳號</button>
+    </div>
   </section>
 
   <!-- ── 統計 Tab ── -->
@@ -1141,6 +1152,22 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
     <div class="form-actions" style="margin-top:16px">
       <button class="btn btn-outline" id="em-cancel">取消</button>
       <button class="btn btn-primary" id="em-save">儲存</button>
+    </div>
+  </div>
+</div>
+
+<div class="edit-overlay" id="delete-account-overlay">
+  <div class="edit-box">
+    <div class="edit-box-title">刪除帳號</div>
+    <div class="edit-box-sub">此操作無法復原，將永久刪除你的所有帳戶與交易記錄。請輸入密碼以確認。</div>
+    <div class="form-group" style="margin-top:12px">
+      <label>密碼</label>
+      <input type="password" id="da-password" autocomplete="current-password">
+      <span class="field-error" id="da-error"></span>
+    </div>
+    <div class="form-actions" style="margin-top:16px">
+      <button class="btn btn-outline" id="da-cancel">取消</button>
+      <button class="btn btn-danger" id="da-confirm">永久刪除帳號</button>
     </div>
   </div>
 </div>
@@ -2289,6 +2316,34 @@ function logout() {
   location.reload();
 }
 
+function showDeleteAccountOverlay() {
+  document.getElementById('da-password').value = '';
+  document.getElementById('da-error').classList.remove('show');
+  document.getElementById('delete-account-overlay').classList.add('show');
+}
+function hideDeleteAccountOverlay() {
+  document.getElementById('delete-account-overlay').classList.remove('show');
+}
+
+async function confirmDeleteAccount() {
+  const password = document.getElementById('da-password').value;
+  const errEl = document.getElementById('da-error');
+  if (!password) {
+    errEl.textContent = '請輸入密碼以確認';
+    errEl.classList.add('show');
+    return;
+  }
+
+  try {
+    await api('DELETE', '/api/auth/me', { password });
+    clearToken();
+    location.reload();
+  } catch (err) {
+    errEl.textContent = err.message || '刪除失敗，請稍後再試';
+    errEl.classList.add('show');
+  }
+}
+
 async function maybeOfferLegacyImport() {
   const legacyAccounts = localStorage.getItem('budget_accounts');
   const legacyTxns = localStorage.getItem('budget_transactions');
@@ -2351,6 +2406,14 @@ async function initApp() {
   document.getElementById('auth-toggle-link').addEventListener('click', () => setAuthMode(authMode === 'login' ? 'register' : 'login'));
   document.getElementById('auth-forgot-link').addEventListener('click', () => setAuthMode(authMode === 'forgot' ? 'login' : 'forgot'));
   document.getElementById('logout-btn').addEventListener('click', logout);
+
+  document.getElementById('show-delete-account-btn').addEventListener('click', showDeleteAccountOverlay);
+  document.getElementById('da-cancel').addEventListener('click', hideDeleteAccountOverlay);
+  document.getElementById('da-confirm').addEventListener('click', confirmDeleteAccount);
+  document.getElementById('da-password').addEventListener('keydown', e => { if (e.key === 'Enter') confirmDeleteAccount(); });
+  document.getElementById('delete-account-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) hideDeleteAccountOverlay();
+  });
 
   document.getElementById('auth-password-toggle').addEventListener('click', () => {
     const input = document.getElementById('auth-password');

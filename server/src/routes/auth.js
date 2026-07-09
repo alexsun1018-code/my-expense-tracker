@@ -149,4 +149,23 @@ router.post('/reset-password', authLimiter, async (req, res) => {
   }
 });
 
+router.delete('/me', authLimiter, requireAuth, async (req, res) => {
+  const { password } = req.body || {};
+  if (!password) return res.status(400).json({ error: '請輸入密碼以確認刪除帳號' });
+
+  try {
+    const result = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.userId]);
+    if (!result.rows.length) return res.status(404).json({ error: '找不到使用者' });
+
+    const ok = await bcrypt.compare(password, result.rows[0].password_hash);
+    if (!ok) return res.status(401).json({ error: '密碼錯誤' });
+
+    await pool.query('DELETE FROM users WHERE id = $1', [req.userId]);
+    res.status(204).end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '刪除帳號失敗' });
+  }
+});
+
 module.exports = router;
