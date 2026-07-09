@@ -923,6 +923,22 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
       </div>
     </div>
 
+    <div class="section-title">投資損益</div>
+    <div class="analysis-grid">
+      <div class="analysis-card">
+        <div class="a-label">投資總獲利</div>
+        <div class="a-amount" id="ov-inv-profit" style="color:var(--income)">$0</div>
+      </div>
+      <div class="analysis-card">
+        <div class="a-label">投資總虧損</div>
+        <div class="a-amount" id="ov-inv-loss" style="color:var(--expense)">$0</div>
+      </div>
+      <div class="analysis-card">
+        <div class="a-label">淨損益</div>
+        <div class="a-amount" id="ov-inv-net">$0</div>
+      </div>
+    </div>
+
     <div class="section-title">帳戶總覽</div>
     <div class="account-grid" id="ov-accounts"></div>
 
@@ -966,7 +982,7 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
           </div>
         </div>
         <div class="form-row">
-          <div class="form-group">
+          <div class="form-group" id="amount-field-group">
             <label>金額 <span style="color:var(--expense)">*</span></label>
             <input type="text" id="f-amount" placeholder="0" inputmode="decimal">
             <span class="field-error" id="err-amount">請填寫有效金額</span>
@@ -977,6 +993,44 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
             <span class="field-error" id="err-category">請選擇分類</span>
           </div>
         </div>
+
+        <div id="invest-fields" style="display:none">
+          <div class="form-row">
+            <div class="form-group">
+              <label>股數單位</label>
+              <select id="f-inv-unit">
+                <option value="lot" selected>張（1張=1000股）</option>
+                <option value="share">股</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>數量 <span style="color:var(--expense)">*</span></label>
+              <input type="text" id="f-inv-qty" placeholder="0" inputmode="decimal">
+              <span class="field-error" id="err-inv-qty">請填寫有效數量</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>買進價格 <span style="color:var(--expense)">*</span></label>
+              <input type="text" id="f-inv-buy" placeholder="0" inputmode="decimal">
+              <span class="field-error" id="err-inv-buy">請填寫有效價格</span>
+            </div>
+            <div class="form-group">
+              <label>賣出價格 <span style="color:var(--expense)">*</span></label>
+              <input type="text" id="f-inv-sell" placeholder="0" inputmode="decimal">
+              <span class="field-error" id="err-inv-sell">請填寫有效價格</span>
+            </div>
+          </div>
+          <div class="form-row" style="grid-template-columns:1fr">
+            <div class="form-group">
+              <label>券商手續費折扣（折）</label>
+              <input type="text" id="f-inv-discount" value="9" inputmode="decimal">
+              <span class="field-error" id="err-inv-discount">請填寫 1～10 的折數</span>
+            </div>
+          </div>
+          <div id="invest-preview" style="font-size:12px; color:var(--text-muted); padding:2px 0 10px; line-height:1.8"></div>
+        </div>
+
         <div class="form-row">
           <div class="form-group">
             <label>支出方式 <span style="color:var(--expense)">*</span></label>
@@ -997,8 +1051,9 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
             </div>
           </div>
           <div class="form-group">
-            <label>商家名稱</label>
+            <label id="f-merchant-label">商家名稱</label>
             <input type="text" id="f-merchant" placeholder="例：7-11、星巴克（選填）" maxlength="50">
+            <span class="field-error" id="err-merchant">請填寫股票名稱</span>
           </div>
         </div>
         <div class="form-row" style="grid-template-columns:1fr">
@@ -1189,9 +1244,13 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
 // 常數
 // ═══════════════════════════════
 const CATEGORIES = {
-  expense: ['餐飲','交通','購物','娛樂','醫療','居住','教育','其他支出'],
+  expense: ['餐飲','交通','購物','娛樂','醫療','居住','教育','投資','其他支出'],
   income:  ['薪資','獎金','投資','獎賞/禮金','其他收入']
 };
+
+const INVEST_CATEGORY = '投資';
+const INVEST_FEE_RATE = 0.001425;   // 手續費率 0.1425%（買賣各一次）
+const INVEST_TAX_RATE = 0.003;      // 交易稅率 0.3%（僅賣出收取）
 
 const ACC_ICONS = { cash: '💵', bank: '🏦', credit: '💳', ewallet: '📱' };
 const ACC_COLORS = {
@@ -1201,7 +1260,7 @@ const ACC_COLORS = {
   ewallet: '#38bdf8'
 };
 
-const PIE_COLORS     = ['#e8908a','#e8b87a','#d8c068','#d0a898','#90a8d8','#b898d8','#d098b8','#a8b8c8'];
+const PIE_COLORS     = ['#e8908a','#e8b87a','#d8c068','#d0a898','#90a8d8','#b898d8','#d098b8','#a8b8c8','#8fb9a8'];
 const INCOME_COLORS  = ['#4ade80','#34d399','#22d3ee','#38bdf8','#86efac'];
 
 // ═══════════════════════════════
@@ -1370,6 +1429,25 @@ function calcCategoryStats(txns, flow) {
     .sort((a, b) => b.amt - a.amt);
 }
 
+function calcInvestResult({ unit, qty, buyPrice, sellPrice, discount }) {
+  const shares = unit === 'lot' ? qty * 1000 : qty;
+  const buyAmt = shares * buyPrice;
+  const sellAmt = shares * sellPrice;
+  const feeRate = INVEST_FEE_RATE * (discount / 10);
+  const buyFee = buyAmt * feeRate;
+  const sellFee = sellAmt * feeRate;
+  const tax = sellAmt * INVEST_TAX_RATE;
+  const net = sellAmt - buyAmt - buyFee - sellFee - tax;
+  return { shares, buyAmt, sellAmt, buyFee, sellFee, tax, net };
+}
+
+function calcInvestmentStats(txns) {
+  const invTxns = txns.filter(t => t.category === INVEST_CATEGORY);
+  const profit = invTxns.filter(t => t.flow === 'income').reduce((s, t) => s + t.amount, 0);
+  const loss = invTxns.filter(t => t.flow === 'expense').reduce((s, t) => s + t.amount, 0);
+  return { profit, loss, net: profit - loss };
+}
+
 function getAccountName(id, accounts) {
   const a = accounts.find(a => a.id === id);
   return a ? a.name : '未知';
@@ -1419,6 +1497,13 @@ function renderOverview() {
   document.getElementById('ov-a-total').textContent = formatAmt(expense);
   document.getElementById('ov-a-necessary').textContent = formatAmt(necessaryAmt);
   document.getElementById('ov-a-optional').textContent = formatAmt(expense - necessaryAmt);
+
+  const invStats = calcInvestmentStats(monthTxns);
+  document.getElementById('ov-inv-profit').textContent = formatAmt(invStats.profit);
+  document.getElementById('ov-inv-loss').textContent = formatAmt(invStats.loss);
+  const invNetEl = document.getElementById('ov-inv-net');
+  invNetEl.textContent = formatBalance(invStats.net);
+  invNetEl.style.color = invStats.net >= 0 ? 'var(--income)' : 'var(--expense)';
 
   // 帳戶卡片
   const grid = document.getElementById('ov-accounts');
@@ -1847,6 +1932,12 @@ function showAddForm() {
   document.getElementById('f-merchant').value = '';
   document.getElementById('f-note').value = '';
   document.getElementById('f-necessary').checked = false;
+  document.getElementById('f-inv-unit').value = 'lot';
+  document.getElementById('f-inv-qty').value = '';
+  document.getElementById('f-inv-buy').value = '';
+  document.getElementById('f-inv-sell').value = '';
+  document.getElementById('f-inv-discount').value = '9';
+  document.getElementById('invest-preview').innerHTML = '';
   setFlowType('expense');
   clearFormErrors();
 
@@ -1875,29 +1966,56 @@ function setFlowType(flow) {
   expBtn.classList.toggle('expense', flow === 'expense');
   incBtn.classList.toggle('active', flow === 'income');
   incBtn.classList.toggle('income', flow === 'income');
-  document.getElementById('necessary-row').style.display = flow === 'expense' ? '' : 'none';
   populateFormSelects();
+  updateInvestFieldsVisibility();
 }
 
 function clearFormErrors() {
   document.querySelectorAll('.field-error').forEach(el => el.classList.remove('show'));
 }
 
+function updateInvestFieldsVisibility() {
+  const isInvest = document.getElementById('f-category').value === INVEST_CATEGORY;
+  document.getElementById('invest-fields').style.display = isInvest ? 'block' : 'none';
+  document.getElementById('amount-field-group').style.display = isInvest ? 'none' : '';
+  document.getElementById('f-merchant-label').textContent = isInvest ? '股票名稱' : '商家名稱';
+  document.getElementById('f-merchant').placeholder = isInvest ? '例：台積電' : '例：7-11、星巴克（選填）';
+  const flow = document.getElementById('f-flow').value;
+  document.getElementById('necessary-row').style.display = (!isInvest && flow === 'expense') ? '' : 'none';
+  if (isInvest) updateInvestPreview();
+}
+
+function updateInvestPreview() {
+  const unit = document.getElementById('f-inv-unit').value;
+  const qty = parseFloat(document.getElementById('f-inv-qty').value);
+  const buyPrice = parseFloat(document.getElementById('f-inv-buy').value);
+  const sellPrice = parseFloat(document.getElementById('f-inv-sell').value);
+  const discount = parseFloat(document.getElementById('f-inv-discount').value);
+  const preview = document.getElementById('invest-preview');
+
+  if (!qty || !buyPrice || !sellPrice || !discount) {
+    preview.innerHTML = '';
+    return;
+  }
+
+  const r = calcInvestResult({ unit, qty, buyPrice, sellPrice, discount });
+  const netColor = r.net >= 0 ? 'var(--income)' : 'var(--expense)';
+  const netLabel = r.net >= 0 ? '獲利（歸類為收入）' : '虧損（歸類為支出）';
+  preview.innerHTML =
+    `手續費（買+賣）：${formatAmt(r.buyFee + r.sellFee)}　交易稅：${formatAmt(r.tax)}<br>` +
+    `<span style="color:${netColor};font-weight:600">${netLabel}：${formatBalance(r.net)}</span>`;
+}
+
 function validateAddForm() {
   let ok = true;
   const date = document.getElementById('f-date').value;
-  const amount = document.getElementById('f-amount').value.trim();
   const category = document.getElementById('f-category').value;
   const account = document.getElementById('f-account').value;
+  const isInvest = category === INVEST_CATEGORY;
 
   if (!date) {
     document.getElementById('err-date').classList.add('show'); ok = false;
   } else { document.getElementById('err-date').classList.remove('show'); }
-
-  if (!amount || !/^\d+(\.\d{1,2})?$/.test(amount) || parseFloat(amount) <= 0) {
-    document.getElementById('err-amount').textContent = !amount ? '請填寫金額' : '請輸入有效正數（最多 2 位小數）';
-    document.getElementById('err-amount').classList.add('show'); ok = false;
-  } else { document.getElementById('err-amount').classList.remove('show'); }
 
   if (!category) {
     document.getElementById('err-category').classList.add('show'); ok = false;
@@ -1907,26 +2025,87 @@ function validateAddForm() {
     document.getElementById('err-account').classList.add('show'); ok = false;
   } else { document.getElementById('err-account').classList.remove('show'); }
 
+  if (isInvest) {
+    document.getElementById('err-amount').classList.remove('show');
+
+    const stockName = document.getElementById('f-merchant').value.trim();
+    if (!stockName) {
+      document.getElementById('err-merchant').classList.add('show'); ok = false;
+    } else { document.getElementById('err-merchant').classList.remove('show'); }
+
+    const qty = parseFloat(document.getElementById('f-inv-qty').value);
+    if (!qty || qty <= 0) {
+      document.getElementById('err-inv-qty').classList.add('show'); ok = false;
+    } else { document.getElementById('err-inv-qty').classList.remove('show'); }
+
+    const buyPrice = parseFloat(document.getElementById('f-inv-buy').value);
+    if (!buyPrice || buyPrice <= 0) {
+      document.getElementById('err-inv-buy').classList.add('show'); ok = false;
+    } else { document.getElementById('err-inv-buy').classList.remove('show'); }
+
+    const sellPrice = parseFloat(document.getElementById('f-inv-sell').value);
+    if (!sellPrice || sellPrice <= 0) {
+      document.getElementById('err-inv-sell').classList.add('show'); ok = false;
+    } else { document.getElementById('err-inv-sell').classList.remove('show'); }
+
+    const discount = parseFloat(document.getElementById('f-inv-discount').value);
+    if (!discount || discount <= 0 || discount > 10) {
+      document.getElementById('err-inv-discount').classList.add('show'); ok = false;
+    } else { document.getElementById('err-inv-discount').classList.remove('show'); }
+  } else {
+    document.getElementById('err-merchant').classList.remove('show');
+    ['err-inv-qty', 'err-inv-buy', 'err-inv-sell', 'err-inv-discount'].forEach(id =>
+      document.getElementById(id).classList.remove('show'));
+
+    const amount = document.getElementById('f-amount').value.trim();
+    if (!amount || !/^\d+(\.\d{1,2})?$/.test(amount) || parseFloat(amount) <= 0) {
+      document.getElementById('err-amount').textContent = !amount ? '請填寫金額' : '請輸入有效正數（最多 2 位小數）';
+      document.getElementById('err-amount').classList.add('show'); ok = false;
+    } else { document.getElementById('err-amount').classList.remove('show'); }
+  }
+
   return ok;
 }
 
 async function submitAddForm() {
   if (!validateAddForm()) return;
 
-  const flow = document.getElementById('f-flow').value;
+  const category = document.getElementById('f-category').value;
+  const isInvest = category === INVEST_CATEGORY;
   const accounts = Store.getAccounts();
   const bankId = state.filterAccountId || accounts[0]?.id || '';
+
+  let flow, amount, note;
+
+  if (isInvest) {
+    const unit = document.getElementById('f-inv-unit').value;
+    const qty = parseFloat(document.getElementById('f-inv-qty').value);
+    const buyPrice = parseFloat(document.getElementById('f-inv-buy').value);
+    const sellPrice = parseFloat(document.getElementById('f-inv-sell').value);
+    const discount = parseFloat(document.getElementById('f-inv-discount').value);
+    const r = calcInvestResult({ unit, qty, buyPrice, sellPrice, discount });
+
+    flow = r.net >= 0 ? 'income' : 'expense';
+    amount = Math.abs(r.net);
+    const unitLabel = unit === 'lot' ? '張' : '股';
+    note = `${qty}${unitLabel}・買$${buyPrice}／賣$${sellPrice}・手續費${formatAmt(r.buyFee + r.sellFee)}・交易稅${formatAmt(r.tax)}`;
+  } else {
+    flow = document.getElementById('f-flow').value;
+    amount = parseFloat(document.getElementById('f-amount').value);
+    note = document.getElementById('f-note').value.trim();
+  }
+
   const txn = {
     id: generateId('txn'),
     date: document.getElementById('f-date').value,
-    amount: parseFloat(document.getElementById('f-amount').value),
+    amount,
     flow,
-    category: document.getElementById('f-category').value,
+    category,
     accountId: bankId,
     paymentMethod: document.getElementById('f-account').value,
     merchant: document.getElementById('f-merchant').value.trim(),
-    note: document.getElementById('f-note').value.trim(),
-    necessary: flow === 'expense' ? document.getElementById('f-necessary').checked : null,
+    note,
+    necessary: (!isInvest && flow === 'expense') ? document.getElementById('f-necessary').checked : null,
     createdAt: Date.now()
   };
 
@@ -2114,6 +2293,14 @@ function bindEvents() {
   // 類型切換
   document.getElementById('flow-expense-btn').addEventListener('click', () => setFlowType('expense'));
   document.getElementById('flow-income-btn').addEventListener('click', () => setFlowType('income'));
+
+  // 投資損益欄位
+  document.getElementById('f-category').addEventListener('change', updateInvestFieldsVisibility);
+  ['f-inv-unit', 'f-inv-qty', 'f-inv-buy', 'f-inv-sell', 'f-inv-discount'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', updateInvestPreview);
+    el.addEventListener('change', updateInvestPreview);
+  });
 
   // 匯出 CSV
   document.getElementById('export-csv-btn').addEventListener('click', exportCSV);
