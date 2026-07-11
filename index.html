@@ -2101,16 +2101,21 @@ async function submitAddForm() {
   if (isInvest) {
     const unit = document.getElementById('f-inv-unit').value;
     const qty = parseFloat(document.getElementById('f-inv-qty').value);
-    const buyPrice = parseFloat(document.getElementById('f-inv-buy').value);
-    const sellPrice = parseFloat(document.getElementById('f-inv-sell').value);
+    const price = parseFloat(document.getElementById('f-inv-price').value);
     const discount = parseFloat(document.getElementById('f-inv-discount').value);
-    const r = calcInvestResult({ unit, qty, buyPrice, sellPrice, discount });
-
-    flow = r.net >= 0 ? 'income' : 'expense';
-    amount = Math.abs(r.net);
     const unitLabel = unit === 'lot' ? '張' : '股';
     const cur = getAccountCurrency(bankId, accounts);
-    note = `${qty}${unitLabel}・買$${buyPrice}／賣$${sellPrice}・手續費${formatAmt(r.buyFee + r.sellFee, cur)}・交易稅${formatAmt(r.tax, cur)}`;
+
+    flow = document.getElementById('f-flow').value;
+    if (flow === 'income') {
+      const r = calcInvestSell({ unit, qty, price, discount });
+      amount = Math.abs(r.net);
+      note = `${qty}${unitLabel}・賣$${price}・手續費${formatAmt(r.fee, cur)}・交易稅${formatAmt(r.tax, cur)}`;
+    } else {
+      const r = calcInvestBuy({ unit, qty, price, discount });
+      amount = r.total;
+      note = `${qty}${unitLabel}・買$${price}・手續費${formatAmt(r.fee, cur)}`;
+    }
   } else {
     flow = document.getElementById('f-flow').value;
     amount = parseFloat(document.getElementById('f-amount').value);
@@ -2338,7 +2343,7 @@ function bindEvents() {
 
   // 投資損益欄位
   document.getElementById('f-category').addEventListener('change', updateInvestFieldsVisibility);
-  ['f-inv-unit', 'f-inv-qty', 'f-inv-buy', 'f-inv-sell', 'f-inv-discount'].forEach(id => {
+  ['f-inv-unit', 'f-inv-qty', 'f-inv-price', 'f-inv-discount'].forEach(id => {
     const el = document.getElementById(id);
     el.addEventListener('input', updateInvestPreview);
     el.addEventListener('change', updateInvestPreview);
