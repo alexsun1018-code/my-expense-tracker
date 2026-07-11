@@ -17,10 +17,17 @@ CREATE TABLE IF NOT EXISTS accounts (
   initial_balance NUMERIC NOT NULL DEFAULT 0,
   color TEXT,
   currency TEXT NOT NULL DEFAULT 'TWD',
+  parent_account_id TEXT,
   PRIMARY KEY (id, user_id)
 );
 
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'TWD';
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS parent_account_id TEXT;
+DO $$ BEGIN
+  ALTER TABLE accounts ADD CONSTRAINT accounts_parent_fk
+    FOREIGN KEY (parent_account_id, user_id) REFERENCES accounts(id, user_id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS transactions (
   id TEXT NOT NULL,

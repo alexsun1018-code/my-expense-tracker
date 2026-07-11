@@ -994,7 +994,7 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
                 <option value="credit">💳 信用卡</option>
                 <option value="ewallet">📱 電子支付</option>
               </select>
-              <select id="ip-currency"></select>
+              <span id="ip-currency-hint" style="font-size:12px;color:var(--text-muted)"></span>
               <button type="button" class="btn btn-primary btn-sm" id="ip-confirm">確認</button>
               <button type="button" class="btn btn-outline btn-sm" id="ip-cancel">取消</button>
             </div>
@@ -1054,9 +1054,14 @@ section.active { display: block; animation: tabFadeIn 0.25s ease; }
         </div>
       </div>
       <div class="form-row">
-        <div class="form-group">
+        <div class="form-group" id="af-currency-group">
           <label>幣別</label>
           <select id="af-currency"></select>
+        </div>
+        <div class="form-group" id="af-parent-group" style="display:none">
+          <label>所屬銀行帳戶 <span style="color:var(--expense)">*</span></label>
+          <select id="af-parent"></select>
+          <span class="field-error" id="err-af-parent">請先新增一個銀行帳戶</span>
         </div>
         <div class="form-group">
           <label>期初餘額</label>
@@ -1505,9 +1510,9 @@ function renderOverview() {
     return currencyGroupHtml(cur, showLabel, { income, expense, balance, necessaryAmt, invStats });
   }).join('');
 
-  // 帳戶卡片
+  // 帳戶卡片（信用卡／電子支付從屬於銀行帳戶，不在此獨立顯示餘額）
   const grid = document.getElementById('ov-accounts');
-  grid.innerHTML = accounts.map(a => {
+  grid.innerHTML = accounts.filter(a => a.type === 'bank' || a.type === 'cash').map(a => {
     const bal = calcAccountBalance(a.id, accounts, txns);
     return `
       <div class="account-mini-card">
@@ -1554,7 +1559,8 @@ function txnItemHtml(t, accounts) {
 function renderAccountFilter() {
   const container = document.getElementById('account-filter');
   if (!container) return;
-  const accounts = Store.getAccounts();
+  // 信用卡／電子支付從屬於銀行帳戶，不是獨立可篩選的帳戶，不在這裡列出
+  const accounts = Store.getAccounts().filter(a => a.type !== 'credit' && a.type !== 'ewallet');
 
   const allActive = !state.filterAccountId;
   const chips = accounts.map(a => {
@@ -1578,6 +1584,7 @@ function renderAccountFilter() {
     switchTab('accounts');
     setTimeout(() => {
       document.getElementById('add-account-form').classList.add('show');
+      updateAddAccountFormFields();
       document.getElementById('af-name').focus();
     }, 80);
   });
@@ -1667,40 +1674,67 @@ function renderRecords() {
 // ═══════════════════════════════
 // UI — 帳戶
 // ═══════════════════════════════
+function accountCardHtml(a, bal, income, expense) {
+  return `
+    <div class="account-card-header">
+      <div class="account-card-name">
+        <span>${ACC_ICONS[a.type] || '💰'}</span>
+        <span>${escapeHtml(a.name)}</span>
+        ${a.name.endsWith(a.currency || DEFAULT_CURRENCY) ? '' : `<span style="font-size:11px;color:var(--text-muted);font-weight:400">${a.currency || DEFAULT_CURRENCY}</span>`}
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="deleteAccount('${a.id}')">刪除</button>
+    </div>
+    <div class="account-card-stats">
+      <div class="account-stat total">
+        <div class="stat-label">目前餘額</div>
+        <div class="stat-value" style="color:${bal < 0 ? 'var(--expense)' : 'var(--accent-light)'}">${formatBalance(bal, a.currency)}</div>
+      </div>
+      <div class="account-stat in">
+        <div class="stat-label">累計收入</div>
+        <div class="stat-value">+${formatAmt(income, a.currency)}</div>
+      </div>
+      <div class="account-stat out">
+        <div class="stat-label">累計支出</div>
+        <div class="stat-value">-${formatAmt(expense, a.currency)}</div>
+      </div>
+    </div>`;
+}
+
 function renderAccounts() {
   const accounts = Store.getAccounts();
   const txns = Store.getTxns();
   const list = document.getElementById('accounts-list');
 
-  list.innerHTML = accounts.map(a => {
+  // 信用卡／電子支付從屬於銀行帳戶，巢狀顯示在所屬帳戶卡片下方；現金維持獨立卡片
+  const topLevel = accounts.filter(a => a.type === 'bank' || a.type === 'cash');
+  const children = accounts.filter(a => a.type === 'credit' || a.type === 'ewallet');
+
+  list.innerHTML = topLevel.map(a => {
     const allTxns = txns.filter(t => t.accountId === a.id);
     const income  = allTxns.filter(t => t.flow === 'income').reduce((s, t) => s + t.amount, 0);
     const expense = allTxns.filter(t => t.flow === 'expense').reduce((s, t) => s + t.amount, 0);
     const bal = (a.initialBalance || 0) + income - expense;
+
+    const kids = a.type === 'bank' ? children.filter(c => c.parentAccountId === a.id) : [];
+    const kidsHtml = kids.map(c => {
+      const cTxns = txns.filter(t => t.paymentMethod === c.id);
+      const cIncome = cTxns.filter(t => t.flow === 'income').reduce((s, t) => s + t.amount, 0);
+      const cExpense = cTxns.filter(t => t.flow === 'expense').reduce((s, t) => s + t.amount, 0);
+      return `
+        <div class="account-child-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border)">
+          <span style="display:flex;align-items:center;gap:8px;font-size:13px">${ACC_ICONS[c.type]} ${escapeHtml(c.name)}</span>
+          <span style="display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text-muted)">
+            <span>收 +${formatAmt(cIncome, c.currency)}</span>
+            <span>支 -${formatAmt(cExpense, c.currency)}</span>
+            <button class="btn btn-danger btn-sm" onclick="deleteAccount('${c.id}')">刪除</button>
+          </span>
+        </div>`;
+    }).join('');
+
     return `
       <div class="account-card">
-        <div class="account-card-header">
-          <div class="account-card-name">
-            <span>${ACC_ICONS[a.type] || '💰'}</span>
-            <span>${escapeHtml(a.name)}</span>
-            <span style="font-size:11px;color:var(--text-muted);font-weight:400">${a.currency || DEFAULT_CURRENCY}</span>
-          </div>
-          <button class="btn btn-danger btn-sm" onclick="deleteAccount('${a.id}')">刪除</button>
-        </div>
-        <div class="account-card-stats">
-          <div class="account-stat total">
-            <div class="stat-label">目前餘額</div>
-            <div class="stat-value" style="color:${bal < 0 ? 'var(--expense)' : 'var(--accent-light)'}">${formatBalance(bal, a.currency)}</div>
-          </div>
-          <div class="account-stat in">
-            <div class="stat-label">累計收入</div>
-            <div class="stat-value">+${formatAmt(income, a.currency)}</div>
-          </div>
-          <div class="account-stat out">
-            <div class="stat-label">累計支出</div>
-            <div class="stat-value">-${formatAmt(expense, a.currency)}</div>
-          </div>
-        </div>
+        ${accountCardHtml(a, bal, income, expense)}
+        ${kidsHtml ? `<div class="account-children" style="margin-top:8px">${kidsHtml}</div>` : ''}
       </div>`;
   }).join('');
 }
@@ -1938,7 +1972,12 @@ function populateFormSelects() {
 
   const accounts = Store.getAccounts();
   const accSel = document.getElementById('f-account');
-  const paymentMethods = accounts.filter(a => ['cash','credit','ewallet'].includes(a.type));
+  const bankCurrency = getAccountCurrency(state.filterAccountId, accounts);
+  const paymentMethods = accounts.filter(a => {
+    if (a.type === 'cash') return (a.currency || DEFAULT_CURRENCY) === bankCurrency;
+    if (a.type === 'credit' || a.type === 'ewallet') return a.parentAccountId === state.filterAccountId;
+    return false;
+  });
   accSel.innerHTML = paymentMethods.map(a => `<option value="${a.id}">${ACC_ICONS[a.type]} ${escapeHtml(a.name)}</option>`).join('');
 }
 
@@ -2163,17 +2202,52 @@ async function deleteTxn(id) {
 // ═══════════════════════════════
 // 帳戶管理
 // ═══════════════════════════════
+function needsParentAccount(type) {
+  return type === 'credit' || type === 'ewallet';
+}
+
+function populateParentAccountSelect() {
+  const banks = Store.getAccounts().filter(a => a.type === 'bank');
+  document.getElementById('af-parent').innerHTML =
+    banks.map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
+}
+
+function updateAddAccountFormFields() {
+  const type = document.getElementById('af-type').value;
+  const isChild = needsParentAccount(type);
+  document.getElementById('af-currency-group').style.display = isChild ? 'none' : '';
+  document.getElementById('af-parent-group').style.display = isChild ? '' : 'none';
+  if (isChild) populateParentAccountSelect();
+}
+
 async function submitAddAccount() {
   const nameEl = document.getElementById('af-name');
   const initEl = document.getElementById('af-initial');
   const name = nameEl.value.trim();
   const initVal = initEl.value.trim();
   const type = document.getElementById('af-type').value;
-
-  let ok = true;
+  const isChild = needsParentAccount(type);
   const accounts = Store.getAccounts();
 
-  if (!name || accounts.some(a => a.name === name)) {
+  let ok = true;
+  let currency = document.getElementById('af-currency').value || DEFAULT_CURRENCY;
+  let parentAccountId = null;
+
+  if (isChild) {
+    parentAccountId = document.getElementById('af-parent').value || '';
+    const parent = accounts.find(a => a.id === parentAccountId);
+    if (!parent) {
+      document.getElementById('err-af-parent').classList.add('show');
+      ok = false;
+    } else {
+      document.getElementById('err-af-parent').classList.remove('show');
+      currency = parent.currency || DEFAULT_CURRENCY;
+    }
+  }
+
+  const fullName = name ? name + currency : '';
+
+  if (!name || accounts.some(a => a.name === fullName)) {
     const msg = !name ? '請填寫帳戶名稱' : '帳戶名稱已存在';
     document.getElementById('err-af-name').textContent = msg;
     document.getElementById('err-af-name').classList.add('show');
@@ -2189,11 +2263,12 @@ async function submitAddAccount() {
 
   const newAcc = {
     id: generateId('acc'),
-    name,
+    name: fullName,
     type,
     initialBalance: parseFloat(initVal),
     color: ACC_COLORS[type] || '#7c6af5',
-    currency: document.getElementById('af-currency').value || DEFAULT_CURRENCY
+    currency,
+    parentAccountId
   };
   try {
     await Store.addAccount(newAcc);
@@ -2204,14 +2279,16 @@ async function submitAddAccount() {
 
   nameEl.value = '';
   initEl.value = '0';
+  document.getElementById('af-type').value = 'bank';
   document.getElementById('af-currency').value = DEFAULT_CURRENCY;
+  updateAddAccountFormFields();
   document.getElementById('add-account-form').classList.remove('show');
   renderAccounts();
 }
 
 window.deleteAccount = async function (id) {
   const txns = Store.getTxns();
-  const hasTxns = txns.some(t => t.accountId === id);
+  const hasTxns = txns.some(t => t.accountId === id || t.paymentMethod === id);
   if (hasTxns) {
     alert('此帳戶仍有交易記錄，無法刪除。請先刪除相關記錄。');
     return;
@@ -2271,6 +2348,21 @@ function setMonth(ym) {
 // ═══════════════════════════════
 let _editId = null;
 
+function updateEmPaymentOptions(selectedPaymentId) {
+  const accounts = Store.getAccounts();
+  const bankId = document.getElementById('em-account').value;
+  const bankAcc = accounts.find(a => a.id === bankId);
+  const bankCurrency = bankAcc ? (bankAcc.currency || DEFAULT_CURRENCY) : DEFAULT_CURRENCY;
+  const paymentAccs = accounts.filter(a => {
+    if (a.type === 'cash') return (a.currency || DEFAULT_CURRENCY) === bankCurrency;
+    if (a.type === 'credit' || a.type === 'ewallet') return a.parentAccountId === bankId;
+    return false;
+  });
+  document.getElementById('em-payment').innerHTML =
+    `<option value="">— 未設定 —</option>` +
+    paymentAccs.map(a => `<option value="${a.id}"${selectedPaymentId === a.id ? ' selected' : ''}>${ACC_ICONS[a.type]} ${escapeHtml(a.name)}</option>`).join('');
+}
+
 function openEditModal(txnId) {
   const txns = Store.getTxns();
   const txn  = txns.find(t => t.id === txnId);
@@ -2279,14 +2371,11 @@ function openEditModal(txnId) {
 
   const accounts      = Store.getAccounts();
   const bankAccounts  = accounts.filter(a => a.type === 'bank');
-  const paymentAccs   = accounts.filter(a => ['cash','credit','ewallet'].includes(a.type));
 
   document.getElementById('em-account').innerHTML =
     bankAccounts.map(a => `<option value="${a.id}"${txn.accountId === a.id ? ' selected' : ''}>${ACC_ICONS[a.type]} ${escapeHtml(a.name)}</option>`).join('');
 
-  document.getElementById('em-payment').innerHTML =
-    `<option value="">— 未設定 —</option>` +
-    paymentAccs.map(a => `<option value="${a.id}"${txn.paymentMethod === a.id ? ' selected' : ''}>${ACC_ICONS[a.type]} ${escapeHtml(a.name)}</option>`).join('');
+  updateEmPaymentOptions(txn.paymentMethod);
 
   const cur = getAccountCurrency(txn.accountId, accounts);
   const label = `${txn.date}　${txn.flow === 'income' ? '+' : '-'}${formatAmt(txn.amount, cur)}　${txn.category}`;
@@ -2307,7 +2396,6 @@ function populateCurrencySelects() {
     .map(([code, c]) => `<option value="${code}"${code === DEFAULT_CURRENCY ? ' selected' : ''}>${c.name}（${code}）</option>`)
     .join('');
   document.getElementById('af-currency').innerHTML = options;
-  document.getElementById('ip-currency').innerHTML = options;
 }
 
 function bindEvents() {
@@ -2359,14 +2447,19 @@ function bindEvents() {
   document.getElementById('show-add-acc-btn').addEventListener('click', () => {
     const form = document.getElementById('add-account-form');
     form.classList.toggle('show');
-    if (form.classList.contains('show')) document.getElementById('af-name').focus();
+    if (form.classList.contains('show')) {
+      updateAddAccountFormFields();
+      document.getElementById('af-name').focus();
+    }
   });
+  document.getElementById('af-type').addEventListener('change', updateAddAccountFormFields);
   document.getElementById('cancel-add-acc-btn').addEventListener('click', () => {
     document.getElementById('add-account-form').classList.remove('show');
   });
   document.getElementById('submit-add-acc-btn').addEventListener('click', submitAddAccount);
 
   // 編輯歸戶 modal
+  document.getElementById('em-account').addEventListener('change', () => updateEmPaymentOptions(''));
   document.getElementById('em-cancel').addEventListener('click', closeEditModal);
   document.getElementById('edit-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeEditModal();
@@ -2388,12 +2481,32 @@ function bindEvents() {
     if (state.currentTab !== 'overview') renderOverview();
   });
 
-  // 支出方式 — inline 新增帳戶
+  // 支出方式 — inline 新增帳戶（信用卡／電子支付從屬於目前銀行帳戶，現金只跟幣別）
+  function updateIpHint() {
+    const accounts = Store.getAccounts();
+    const type = document.getElementById('ip-type').value;
+    const ctxAcc = accounts.find(a => a.id === state.filterAccountId);
+    const hint = document.getElementById('ip-currency-hint');
+    if (needsParentAccount(type)) {
+      if (ctxAcc && ctxAcc.type === 'bank') {
+        hint.textContent = `所屬銀行帳戶：${ctxAcc.name}（${CURRENCIES[ctxAcc.currency || DEFAULT_CURRENCY].name}）`;
+      } else {
+        hint.textContent = '⚠ 請先在上方選擇一個銀行帳戶';
+      }
+    } else {
+      const cur = getAccountCurrency(state.filterAccountId, accounts);
+      hint.textContent = `幣別：${CURRENCIES[cur].name}（跟隨目前帳戶）`;
+    }
+  }
   document.getElementById('add-payment-btn').addEventListener('click', () => {
     const form = document.getElementById('inline-payment-form');
     form.classList.toggle('show');
-    if (form.classList.contains('show')) document.getElementById('ip-name').focus();
+    if (form.classList.contains('show')) {
+      updateIpHint();
+      document.getElementById('ip-name').focus();
+    }
   });
+  document.getElementById('ip-type').addEventListener('change', updateIpHint);
   document.getElementById('ip-cancel').addEventListener('click', () => {
     document.getElementById('inline-payment-form').classList.remove('show');
     document.getElementById('ip-name').value = '';
@@ -2402,13 +2515,29 @@ function bindEvents() {
     const name = document.getElementById('ip-name').value.trim();
     if (!name) { document.getElementById('ip-name').focus(); return; }
     const accounts = Store.getAccounts();
-    const existing = accounts.find(a => a.name === name);
+    const type = document.getElementById('ip-type').value;
+    const ctxAcc = accounts.find(a => a.id === state.filterAccountId);
+
+    let currency, parentAccountId = null;
+    if (needsParentAccount(type)) {
+      if (!ctxAcc || ctxAcc.type !== 'bank') {
+        alert('信用卡／電子支付需從屬於一個銀行帳戶，請先在上方選擇一個銀行帳戶');
+        return;
+      }
+      parentAccountId = ctxAcc.id;
+      currency = ctxAcc.currency || DEFAULT_CURRENCY;
+    } else {
+      currency = getAccountCurrency(state.filterAccountId, accounts);
+    }
+
+    const fullName = name + currency;
+    const existing = accounts.find(a =>
+      a.name === fullName && (needsParentAccount(type) ? a.parentAccountId === parentAccountId : true)
+    );
     if (existing) {
       document.getElementById('f-account').value = existing.id;
     } else {
-      const type = document.getElementById('ip-type').value;
-      const currency = document.getElementById('ip-currency').value || DEFAULT_CURRENCY;
-      const newAcc = { id: generateId('acc'), name, type, initialBalance: 0, color: ACC_COLORS[type] || ACC_COLORS.cash, currency };
+      const newAcc = { id: generateId('acc'), name: fullName, type, initialBalance: 0, color: ACC_COLORS[type] || ACC_COLORS.cash, currency, parentAccountId };
       try {
         await Store.addAccount(newAcc);
       } catch {
