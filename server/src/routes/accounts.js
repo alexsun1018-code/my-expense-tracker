@@ -12,6 +12,7 @@ function toApi(row) {
     type: row.type,
     initialBalance: Number(row.initial_balance),
     color: row.color,
+    currency: row.currency,
   };
 }
 
@@ -24,15 +25,15 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { id, name, type, initialBalance, color } = req.body || {};
+  const { id, name, type, initialBalance, color, currency } = req.body || {};
   if (!id || !name || !type) return res.status(400).json({ error: '缺少必要欄位' });
 
   try {
     await pool.query(
-      'INSERT INTO accounts (id, user_id, name, type, initial_balance, color) VALUES ($1,$2,$3,$4,$5,$6)',
-      [id, req.userId, name, type, initialBalance || 0, color || null]
+      'INSERT INTO accounts (id, user_id, name, type, initial_balance, color, currency) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [id, req.userId, name, type, initialBalance || 0, color || null, currency || 'TWD']
     );
-    res.status(201).json({ id, name, type, initialBalance: initialBalance || 0, color });
+    res.status(201).json({ id, name, type, initialBalance: initialBalance || 0, color, currency: currency || 'TWD' });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: '帳戶已存在' });
     console.error(err);

@@ -16,8 +16,11 @@ CREATE TABLE IF NOT EXISTS accounts (
   type TEXT NOT NULL,
   initial_balance NUMERIC NOT NULL DEFAULT 0,
   color TEXT,
+  currency TEXT NOT NULL DEFAULT 'TWD',
   PRIMARY KEY (id, user_id)
 );
+
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'TWD';
 
 CREATE TABLE IF NOT EXISTS transactions (
   id TEXT NOT NULL,
